@@ -100,15 +100,16 @@ send_response(BinaryResponse, QueryState = #inter_dc_query_state{local_pid=Sende
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-    {_, Port} = get_address(),
+    Queue = io_lib:format("~p", [dc_utilities:get_my_dc_id()]),
     Config = #{
-        module => channel_zeromq,
+        module => channel_rabbitmq,
         pattern => rpc,
         load_balanced => true,
         handler => self(),
         network_params => #{
             host => {0,0,0,0},
-            port => Port
+            port => 5672,
+            rpc_queue_name => list_to_bitstring(Queue)
         }
     },
     {ok, Channel} = antidote_channel:start_link(Config),

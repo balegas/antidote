@@ -37,58 +37,75 @@
 
 %% API
 -export([
-  add_dc/2,
-  del_dc/1
+    add_dc/2,
+    del_dc/1
 ]).
 
 %% Server methods
 -export([
-  init/1,
-  start_link/0,
-  handle_call/3,
-  handle_cast/2,
-  handle_info/2,
-  terminate/2,
-  code_change/3
-  ]).
+    init/1,
+    start_link/0,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
 
 %% State
 -record(state, {
-    channels :: dict:dict(dcid(), pid()) % DCID -> socket
+    channel :: pid(),
+    listening_dcs
 }).
 
 %%%% API --------------------------------------------------------------------+
 
 %% TODO: persist added DCs in case of a node failure, reconnect on node restart.
 -spec add_dc(dcid(), [socket_address()]) -> ok.
-add_dc(DCID, Publishers) -> gen_server:call(?MODULE, {add_dc, DCID, Publishers}, ?COMM_TIMEOUT).
+add_dc(DCId, Publishers) -> gen_server:call(?MODULE, {add_dc, DCId, Publishers}, ?COMM_TIMEOUT).
 
 -spec del_dc(dcid()) -> ok.
-del_dc(DCID) -> gen_server:call(?MODULE, {del_dc, DCID}, ?COMM_TIMEOUT).
+del_dc(DCId) -> gen_server:call(?MODULE, {del_dc, DCId}, ?COMM_TIMEOUT).
 
 %%%% Server methods ---------------------------------------------------------+
 
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
-init([]) -> {ok, #state{channels = dict:new()}}.
+init([]) ->
+    {ok, #state{listening_dcs = sets:new()}}.
 
-handle_call({add_dc, DCID, Publishers}, _From, OldState) ->
-    %% First delete the DC if it is alread connected
-    {_, State} = del_dc(DCID, OldState),
-    case connect_to_nodes(Publishers, []) of
-        {ok, Channels} ->
-            %% TODO maybe intercept a situation where the vnode location changes and reflect it in sub socket filer rules,
-            %% optimizing traffic between nodes inside a DC. That could save a tiny bit of bandwidth after node failure.
-            {reply, ok, State#state{channels = dict:store(DCID, Channels, State#state.channels)}};
-        connection_error ->
-            {reply, error, State}
-    end;
+%TODO: Doesn't need to create new channels every time. But cannot create on init, because ring is not stable.
+handle_call({add_dc, DCId, _Publishers}, _From, #state{channel = Channel, listening_dcs = DCSet} = State) ->
+    delete_chan(Channel),
+    {ok, NewChannel} = case antidote_channel:is_alive(channel_rabbitmq, #rabbitmq_network{host = {127, 0, 0, 1}, port = 5672}) of
+                           true ->
+                               PartString = lists:map(
+                                   fun(P) ->
+                                       list_to_binary(io_lib:format("~p", [P]))
+                                   end, dc_utilities:get_my_partitions()),
+                               Config = #{
+                                   module => channel_rabbitmq,
+                                   pattern => pub_sub,
+                                   handler => self(),
+                                   topics => PartString,
+                                   namespace => <<>>,
+                                   network_params => #{
+                                       publishersAddresses => [{{127, 0, 0, 1}, 5672}]
+                                   }
+                               },
+                               antidote_channel:start_link(Config);
+                           _ -> {stop, {error_connecting}}
+                       end,
+    {reply, ok, State#state{channel = NewChannel, listening_dcs = sets:add_element(DCId, DCSet)}};
 
-handle_call({del_dc, DCID}, _From, State) ->
-    {Resp, NewState} = del_dc(DCID, State),
-    {reply, Resp, NewState}.
+handle_call({del_dc, {DcID, _}}, _From, #state{listening_dcs = DCSet} = State) ->
+    {reply, ok, State#state{listening_dcs = sets:del_element(DcID, DCSet)}}.
 
-handle_cast(#pub_sub_msg{payload = #interdc_txn{} = Msg} , State) ->
-    inter_dc_sub_vnode:deliver_txn(Msg),
+handle_cast(#pub_sub_msg{payload = #interdc_txn{dcid = DCId} = Msg}, #state{listening_dcs = DCs} = State) ->
+    case sets:is_element(DCId, DCs) of
+        true ->
+            inter_dc_sub_vnode:deliver_txn(Msg);
+        _ -> ok % Ignore local messages
+    end,
     {noreply, State};
 
 handle_cast(_Request, State) -> {noreply, State}.
@@ -97,53 +114,10 @@ handle_info(_Msg, State) ->
     {noreply, State}.
 
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
-terminate(_Reason, State) ->
-    F = fun({_, Channels}) -> lists:foreach(fun antidote_channel:stop/1, Channels) end,
-    lists:foreach(F, dict:to_list(State#state.channels)).
+terminate(_Reason, #state{channel = Channel}) ->
+    antidote_channel:stop(Channel).
 
-del_dc(DCID, State) ->
-    case dict:find(DCID, State#state.channels) of
-        {ok, Channels} ->
-            lists:foreach(fun antidote_channel:stop/1, Channels),
-            {ok, State#state{channels = dict:erase(DCID, State#state.channels)}};
-        error ->
-            {ok, State}
-    end.
+delete_chan(undefined) -> ok;
 
-connect_to_nodes([], Acc) ->
-    {ok, Acc};
-connect_to_nodes([Node | Rest], Acc) ->
-    case connect_to_node(Node) of
-        {ok, Channel} ->
-            connect_to_nodes(Rest, [Channel | Acc]);
-        connection_error ->
-            lists:foreach(fun antidote_channel:stop/1, Acc),
-            connection_error
-    end.
-
-connect_to_node([]) ->
-    logger:error("Unable to subscribe to DC"),
-    connection_error;
-connect_to_node([Address | Rest]) ->
-    case antidote_channel:is_alive(channel_zeromq, pub_sub, #{address => Address}) of
-        {true,_} ->
-            PartBin = lists:map(
-                fun(P) ->
-                    inter_dc_txn:partition_to_bin(P)
-                end, dc_utilities:get_my_partitions()),
-
-            Config = #{
-                module => channel_zeromq,
-                pattern => pub_sub,
-                handler => self(),
-                topics => PartBin,
-                namespace => <<>>,
-                network_params => #{
-                    publishersAddresses => [Address]
-                }
-            },
-            antidote_channel:start_link(Config);
-
-        false ->
-            connect_to_node(Rest)
-    end.
+delete_chan(Channel) ->
+    antidote_channel:stop(Channel).

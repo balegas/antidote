@@ -30,17 +30,19 @@ init([]) ->
   % We tolerate only 1 error per 5 seconds, because most errors should
   % be handled at a lower level.
   SupFlags = #{strategy => rest_for_one, intensity => 1, period => 5},
-  RanchSupSpec = #{
-    id => ranch_sup,
-    start => {ranch_sup, start_link, []},
-    restart => permanent,
-    shutdown => 1000,
-    type => supervisor,
-    modules => [ranch_sup]},
-  {ok, {SupFlags, [
-    RanchSupSpec,
-    pb_listener()
-  ]}}.
+    case whereis(ranch_sup) of
+        undefined ->
+            RanchSupSpec = #{
+                id => ranch_sup,
+                start => {ranch_sup, start_link, []},
+                restart => permanent,
+                shutdown => 1000,
+                type => supervisor,
+                modules => [ranch_sup]},
+            {ok, {SupFlags, [RanchSupSpec,pb_listener()]}};
+        _ ->
+            {ok, {SupFlags, [pb_listener()]}}
+    end.
 
 %%====================================================================
 %% Internal functions

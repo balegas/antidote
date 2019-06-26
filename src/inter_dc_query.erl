@@ -101,7 +101,7 @@ handle_call({add_dc, DCID, LogReaders}, _From, OldState) ->
     {_, State} = del_dc(DCID, OldState),
     {Result, NewState} =
     lists:foldl(fun({PartitionList, AddressList}, {ResultAcc, AccState}) ->
-                    case connect_to_node(AddressList) of
+                    case connect_to_node(DCID, AddressList) of
                         {ok, Channel} ->
                             DCPartitionDict =
                             case dict:find(DCID, AccState#state.channels) of
@@ -224,55 +224,59 @@ req_sent(ReqIdBinary, RequestEntry, State=#state{unanswered_queries=Table, req_i
 
 %% A node is a list of addresses because it can have multiple interfaces
 %% this just goes through the list and connects to the first interface that works
-connect_to_node([]) ->
+connect_to_node(_DCId,[]) ->
     logger:error("Unable to subscribe to DC log reader"),
     connection_error;
 
-% TODO: Message being encoded multiple times. Must create parameter in antidote_channel to accept binary messages.
-connect_to_node([{Host, Port} = Address| Rest]) ->
-    case antidote_channel:is_alive(channel_zeromq, rpc, #{address => Address}) of
+connect_to_node(DCId, [{_Host, Port} | Rest]) ->
+    case antidote_channel:is_alive(channel_rabbitmq, #rabbitmq_network{host = {127, 0, 0, 1}, port = 5672}) of
         true ->
-            case check_protocol_version(Host, Port) of
+            case check_protocol_version({127, 0, 0, 1}, Port) of
                 true ->
+                    RemoteQueue = io_lib:format("~p", [DCId]),
                     Config = #{
-                        module => channel_zeromq,
+                        module => channel_rabbitmq,
                         pattern => rpc,
                         async => true,
                         handler => self(),
                         network_params => #{
-                            remote_host => Host,
-                            remote_port => Port
+                            remote_host => {127, 0, 0, 1},
+                            remote_port => 5672,
+                            remote_rpc_queue_name => list_to_bitstring(RemoteQueue)
                         }
                     },
                     %% Create a subscriber socket for the specified DC
                     %% For each partition in the current node:
                     antidote_channel:start_link(Config);
-                _ -> connect_to_node(Rest)
+                _ -> connect_to_node(DCId, Rest)
             end;
         _ ->
-            connect_to_node(Rest)
+            connect_to_node(DCId, Rest)
     end.
 
-check_protocol_version(Host, Port) ->
-    Config = #{
-        module => channel_zeromq,
-        pattern => rpc,
-        async => false,
-        network_params => #{
-            remote_host => Host,
-            remote_port => Port
-        }
-    },
-    {ok, Channel} = antidote_channel:start_link(Config),
-
-    BinaryVersion = ?MESSAGE_VERSION,
-    ReqIdBinary = inter_dc_txn:req_id_to_bin(0),
-    Msg = <<BinaryVersion/binary, ReqIdBinary/binary, ?CHECK_UP_MSG>>,
-    Reply = antidote_channel:send(Channel, #rpc_msg{request_payload = Msg}),
-    antidote_channel:stop(Channel),
-    case binary_utilities:check_version_and_req_id(Reply) of
-        {_, <<?OK_MSG>>} -> true;
-        _ -> false
-    end.
-
+check_protocol_version(_Host, _Port) ->
+%%    RemoteQueue = inet:ntoa(Host) ++ integer_to_list(Port),
+%%    lager:info("RemoteQueue name check protocol ~p",[RemoteQueue]),
+%%    Config = #{
+%%        module => channel_rabbitmq,
+%%        pattern => rpc,
+%%        async => false,
+%%        network_params => #{
+%%            remote_host => Host,
+%%            remote_port => 5672,
+%%            remote_rpc_queue_name => list_to_bitstring(RemoteQueue)
+%%        }
+%%    },
+%%    {ok, Channel} = antidote_channel:start_link(Config),
+%%
+%%    BinaryVersion = ?MESSAGE_VERSION,
+%%    ReqIdBinary = inter_dc_txn:req_id_to_bin(0),
+%%    Msg = <<BinaryVersion/binary, ReqIdBinary/binary, ?CHECK_UP_MSG>>,
+%%    Reply = antidote_channel:send(Channel, #rpc_msg{request_payload = Msg}),
+%%    antidote_channel:stop(Channel),
+%%    case binary_utilities:check_version_and_req_id(Reply) of
+%%        {_, <<?OK_MSG>>} -> true;
+%%        _ -> false
+%%    end.
+true.
 

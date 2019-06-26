@@ -88,7 +88,8 @@ get_address_list() ->
 
 -spec broadcast(#interdc_txn{}) -> ok.
 broadcast(#interdc_txn{partition = P}=Txn) ->
-  case catch gen_server:call(?MODULE, {publish, inter_dc_txn:partition_to_bin(P), Txn}) of
+  Partition = list_to_binary(io_lib:format("~p", [P])),
+  case catch gen_server:call(?MODULE, {publish, Partition, Txn}) of
     {'EXIT', _Reason} -> logger:warning("Failed to broadcast a transaction."); %% this can happen if a node is shutting down.
     Normal -> Normal
   end.
@@ -98,18 +99,15 @@ broadcast(#interdc_txn{partition = P}=Txn) ->
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
-    {_, Port} = get_address(),
-
     Config = #{
-        module => channel_zeromq,
+        module => channel_rabbitmq,
         pattern => pub_sub,
         namespace => <<>>,
         network_params => #{
             host => {0,0,0,0},
-            port => Port
+            port => 5672
         }
     },
-
     {ok, Channel} = antidote_channel:start_link(Config),
     {ok, #state{channel = Channel}}.
 
