@@ -137,31 +137,31 @@ handle_call({del_dc, DCID}, _From, State) ->
     {reply, ok, NewState};
 
 %% Handle an instruction to ask a remote DC.
-handle_call({any_request, RequestType, PDCID, BinaryRequest, Func}, _From, State=#state{req_id=ReqId}) ->
+handle_call({any_request, RequestType, PDCID, BinaryRequest, Func}, _From, State = #state{req_id = ReqId}) ->
     {DCID, Partition} = PDCID,
     case dict:find(DCID, State#state.channels) of
-    %% If socket found
-    %% Find the socket that is responsible for this partition
-    {ok, DCPartitionDict} ->
-        {SendPartition, Channel} = case dict:find(Partition, DCPartitionDict) of
-                                      {ok, Soc} ->
-                                          {Partition, Soc};
-                                      error ->
-                                          %% If you don't see this parition at the DC, just take the first
-                                          %% socket from this DC
-                                          %% Maybe should use random??
-                                          hd(dict:to_list(DCPartitionDict))
-                                  end,
-        %% Build the binary request
-        VersionBinary = ?MESSAGE_VERSION,
-        ReqIdBinary = inter_dc_txn:req_id_to_bin(ReqId),
-        FullRequest = <<VersionBinary/binary, ReqIdBinary/binary, RequestType, BinaryRequest/binary>>,
-        antidote_channel:send(Channel, #rpc_msg{request_payload = FullRequest}),
-        RequestEntry = #request_cache_entry{request_type=RequestType, req_id_binary=ReqIdBinary,
-                                            func=Func, pdcid={DCID, SendPartition}, binary_req=FullRequest},
-        {reply, ok, req_sent(ReqIdBinary, RequestEntry, State)};
-    %% If socket not found
-    _ -> {reply, unknown_dc, State}
+        %% If socket found
+        %% Find the socket that is responsible for this partition
+        {ok, DCPartitionDict} ->
+            {SendPartition, Channel} = case dict:find(Partition, DCPartitionDict) of
+                                           {ok, Soc} ->
+                                               {Partition, Soc};
+                                           error ->
+                                               %% If you don't see this parition at the DC, just take the first
+                                               %% socket from this DC
+                                               %% Maybe should use random??
+                                               hd(dict:to_list(DCPartitionDict))
+                                       end,
+            %% Build the binary request
+            VersionBinary = ?MESSAGE_VERSION,
+            ReqIdBinary = inter_dc_txn:req_id_to_bin(ReqId),
+            FullRequest = <<VersionBinary/binary, ReqIdBinary/binary, RequestType, BinaryRequest/binary>>,
+            antidote_channel:send(Channel, #rpc_msg{request_payload = FullRequest}),
+            RequestEntry = #request_cache_entry{request_type = RequestType, req_id_binary = ReqIdBinary,
+                func = Func, pdcid = {DCID, SendPartition}, binary_req = FullRequest},
+            {reply, ok, req_sent(ReqIdBinary, RequestEntry, State)};
+        %% If socket not found
+        _ -> {reply, unknown_dc, State}
     end.
 
 close_dc_sockets(DCPartitionDict) ->
@@ -228,20 +228,23 @@ connect_to_node(_DCId,[]) ->
     logger:error("Unable to subscribe to DC log reader"),
     connection_error;
 
-connect_to_node(DCId, [{_Host, Port} | Rest]) ->
-    case antidote_channel:is_alive(channel_rabbitmq, #rabbitmq_network{host = {127, 0, 0, 1}, port = 5672}) of
+connect_to_node(DCId, [{_Host, _Port} | Rest]) ->
+    {ok, Host} = inet:parse_address(application:get_env(antidote, rabbitmq_host, ?DEFAULT_RABBITMQ_HOST)),
+    Port = application:get_env(antidote, rabbitmq_port, ?DEFAULT_RABBITMQ_PORT),
+    RemoteQueue = io_lib:format("~p", [DCId]),
+
+    case antidote_channel:is_alive(channel_rabbitmq, #rabbitmq_network{host = Host, port = Port}) of
         true ->
-            case check_protocol_version({127, 0, 0, 1}, Port) of
+            case check_protocol_version(Host, Port, RemoteQueue) of
                 true ->
-                    RemoteQueue = io_lib:format("~p", [DCId]),
                     Config = #{
                         module => channel_rabbitmq,
                         pattern => rpc,
                         async => true,
                         handler => self(),
                         network_params => #{
-                            remote_host => {127, 0, 0, 1},
-                            remote_port => 5672,
+                            remote_host => Host,
+                            remote_port => Port,
                             remote_rpc_queue_name => list_to_bitstring(RemoteQueue)
                         }
                     },
@@ -254,29 +257,24 @@ connect_to_node(DCId, [{_Host, Port} | Rest]) ->
             connect_to_node(DCId, Rest)
     end.
 
-check_protocol_version(_Host, _Port) ->
-%%    RemoteQueue = inet:ntoa(Host) ++ integer_to_list(Port),
-%%    lager:info("RemoteQueue name check protocol ~p",[RemoteQueue]),
-%%    Config = #{
-%%        module => channel_rabbitmq,
-%%        pattern => rpc,
-%%        async => false,
-%%        network_params => #{
-%%            remote_host => Host,
-%%            remote_port => 5672,
-%%            remote_rpc_queue_name => list_to_bitstring(RemoteQueue)
-%%        }
-%%    },
-%%    {ok, Channel} = antidote_channel:start_link(Config),
-%%
-%%    BinaryVersion = ?MESSAGE_VERSION,
-%%    ReqIdBinary = inter_dc_txn:req_id_to_bin(0),
-%%    Msg = <<BinaryVersion/binary, ReqIdBinary/binary, ?CHECK_UP_MSG>>,
-%%    Reply = antidote_channel:send(Channel, #rpc_msg{request_payload = Msg}),
-%%    antidote_channel:stop(Channel),
-%%    case binary_utilities:check_version_and_req_id(Reply) of
-%%        {_, <<?OK_MSG>>} -> true;
-%%        _ -> false
-%%    end.
-true.
-
+check_protocol_version(Host, Port,RemoteQueue) ->
+    Config = #{
+        module => channel_rabbitmq,
+        pattern => rpc,
+        async => false,
+        network_params => #{
+            remote_host => Host,
+            remote_port => Port,
+            remote_rpc_queue_name => list_to_bitstring(RemoteQueue)
+        }
+    },
+    {ok, Channel} = antidote_channel:start_link(Config),
+    BinaryVersion = ?MESSAGE_VERSION,
+    ReqIdBinary = inter_dc_txn:req_id_to_bin(0),
+    Msg = <<BinaryVersion/binary, ReqIdBinary/binary, ?CHECK_UP_MSG>>,
+    Reply = antidote_channel:send(Channel, #rpc_msg{request_payload = Msg}),
+    antidote_channel:stop(Channel),
+    case binary_utilities:check_version_and_req_id(Reply) of
+        {_, <<?OK_MSG>>} -> true;
+        _ -> false
+    end.

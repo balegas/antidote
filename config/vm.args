@@ -34,6 +34,8 @@
 -antidote pubsub_port ${PUBSUB_PORT}
 -antidote logreader_port ${LOGREADER_PORT}
 -antidote metrics_port ${METRICS_PORT}
+-antidote rabbitmq_host '"${RABBITMQ_HOST}"'
+-antidote rabbitmq_port '"${RABBITMQ_PORT}"'
 
 ## Ranch configuration values coming from the command line.
 -ranch pb_port ${PB_PORT}

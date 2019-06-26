@@ -30,6 +30,14 @@ if [ -z "$METRICS_PORT" ]; then
   export METRICS_PORT=3001
 fi
 
+if [ -z "$RABBITMQ_HOST" ]; then
+  export RABBITMQ_HOST="127.0.0.1"
+fi
+
+if [ -z "$RABBITMQ_PORT" ]; then
+  export RABBITMQ_PORT=5672
+fi
+
 # Ring State directory.
 if [ -z "$RING_STATE_DIR" ]; then
   export RING_STATE_DIR="data/ring"

@@ -100,6 +100,8 @@ send_response(BinaryResponse, QueryState = #inter_dc_query_state{local_pid=Sende
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
+    Port = application:get_env(antidote, rabbitmq_port, ?DEFAULT_RABBITMQ_PORT),
+
     Queue = io_lib:format("~p", [dc_utilities:get_my_dc_id()]),
     Config = #{
         module => channel_rabbitmq,
@@ -108,13 +110,12 @@ init([]) ->
         handler => self(),
         network_params => #{
             host => {0,0,0,0},
-            port => 5672,
+            port => Port,
             rpc_queue_name => list_to_bitstring(Queue)
         }
     },
     {ok, Channel} = antidote_channel:start_link(Config),
     _Res = rand_compat:seed(erlang:phash2([node()]), erlang:monotonic_time(), erlang:unique_integer()),
-    logger:info("Log reader started on port ~p", [Port]),
     {ok, #state{channel = Channel}}.
 
 

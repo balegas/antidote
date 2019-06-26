@@ -99,13 +99,14 @@ broadcast(#interdc_txn{partition = P}=Txn) ->
 start_link() -> gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 init([]) ->
+    Port = application:get_env(antidote, rabbitmq_port, ?DEFAULT_RABBITMQ_PORT),
     Config = #{
         module => channel_rabbitmq,
         pattern => pub_sub,
         namespace => <<>>,
         network_params => #{
             host => {0,0,0,0},
-            port => 5672
+            port => Port
         }
     },
     {ok, Channel} = antidote_channel:start_link(Config),

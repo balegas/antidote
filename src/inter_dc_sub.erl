@@ -75,8 +75,11 @@ init([]) ->
 
 %TODO: Doesn't need to create new channels every time. But cannot create on init, because ring is not stable.
 handle_call({add_dc, DCId, _Publishers}, _From, #state{channel = Channel, listening_dcs = DCSet} = State) ->
+    {ok, Host} = inet:parse_address(application:get_env(antidote, rabbitmq_host, ?DEFAULT_RABBITMQ_HOST)),
+    Port = application:get_env(antidote, rabbitmq_port, ?DEFAULT_RABBITMQ_PORT),
+
     delete_chan(Channel),
-    {ok, NewChannel} = case antidote_channel:is_alive(channel_rabbitmq, #rabbitmq_network{host = {127, 0, 0, 1}, port = 5672}) of
+    {ok, NewChannel} = case antidote_channel:is_alive(channel_rabbitmq, #rabbitmq_network{host = Host, port = Port}) of
                            true ->
                                PartString = lists:map(
                                    fun(P) ->
@@ -88,9 +91,7 @@ handle_call({add_dc, DCId, _Publishers}, _From, #state{channel = Channel, listen
                                    handler => self(),
                                    topics => PartString,
                                    namespace => <<>>,
-                                   network_params => #{
-                                       publishersAddresses => [{{127, 0, 0, 1}, 5672}]
-                                   }
+                                   network_params => #{}
                                },
                                antidote_channel:start_link(Config);
                            _ -> {stop, {error_connecting}}
