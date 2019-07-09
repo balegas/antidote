@@ -101,15 +101,15 @@ handle_call({add_dc, DCId, _Publishers}, _From, #state{channel = Channel, listen
 handle_call({del_dc, {DcID, _}}, _From, #state{listening_dcs = DCSet} = State) ->
     {reply, ok, State#state{listening_dcs = sets:del_element(DcID, DCSet)}}.
 
-handle_cast(#pub_sub_msg{payload = #interdc_txn{dcid = DCId} = Msg}, #state{listening_dcs = DCs} = State) ->
+handle_cast(_Request, State) -> {noreply, State}.
+
+handle_info(#pub_sub_msg{payload = #interdc_txn{dcid = DCId} = Msg}, #state{listening_dcs = DCs} = State) ->
     case sets:is_element(DCId, DCs) of
         true ->
             inter_dc_sub_vnode:deliver_txn(Msg);
         _ -> ok % Ignore local messages
     end,
     {noreply, State};
-
-handle_cast(_Request, State) -> {noreply, State}.
 
 handle_info(_Msg, State) ->
     {noreply, State}.

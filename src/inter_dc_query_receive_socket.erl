@@ -118,12 +118,7 @@ init([]) ->
     _Res = rand_compat:seed(erlang:phash2([node()]), erlang:monotonic_time(), erlang:unique_integer()),
     {ok, #state{channel = Channel}}.
 
-
-handle_info(Info, State) ->
-    logger:info("got weird info ~p", [Info]),
-    {noreply, State}.
-
-handle_cast(#rpc_msg{request_id = RRef, request_payload = Payload}, #state{channel = Channel} = State) ->
+handle_info(#rpc_msg{request_id = RRef, request_payload = Payload}, #state{channel = Channel} = State) ->
     %% Decode the message
     {ReqId, RestMsg} = binary_utilities:check_version_and_req_id(Payload),
     %% Create a response
@@ -148,6 +143,10 @@ handle_cast(#rpc_msg{request_id = RRef, request_payload = Payload}, #state{chann
             antidote_channel:reply(Channel, RRef, <<?ERROR_MSG, ErrorBinary/binary>>)
     end,
     {noreply, State};
+
+handle_info(Info, State) ->
+    logger:info("got weird info ~p", [Info]),
+    {noreply, State}.
 
 handle_cast({send_response, BinaryResponse,
          #inter_dc_query_state{request_type = ReqType, request_ref = RRef,
