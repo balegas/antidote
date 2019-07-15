@@ -118,7 +118,7 @@ init([]) ->
     _Res = rand_compat:seed(erlang:phash2([node()]), erlang:monotonic_time(), erlang:unique_integer()),
     {ok, #state{channel = Channel}}.
 
-handle_info(#rpc_msg{request_id = RRef, request_payload = Payload}, #state{channel = Channel} = State) ->
+handle_info(#rpc_msg{request_id = RRef, request_payload = Payload}, #state{channel = Channel} = State) when RRef =/= undefined ->
     %% Decode the message
     {ReqId, RestMsg} = binary_utilities:check_version_and_req_id(Payload),
     %% Create a response

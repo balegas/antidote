@@ -54,7 +54,7 @@
 
 %% State
 -record(state, {
-    channel :: pid(),
+    channel :: pid() | undefined,
     listening_dcs
 }).
 
@@ -117,8 +117,6 @@ handle_info(_Msg, State) ->
 code_change(_OldVsn, State, _Extra) -> {ok, State}.
 terminate(_Reason, #state{channel = Channel}) ->
     antidote_channel:stop(Channel).
-
-delete_chan(undefined) -> ok;
 
 delete_chan(Channel) ->
     antidote_channel:stop(Channel).
